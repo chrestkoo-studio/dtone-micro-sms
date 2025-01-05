@@ -81,12 +81,6 @@ func (ctrl *SmsController) ProcessSendSmsV1(ctx context.Context, in *sms.Process
 	logMsgTemplate := fmt.Sprintf("[SmsController][CreateWalletTransV1][in:%s]", json.String(in))
 	ctx = custom.SetLogIdIfNotExist(ctx, "")
 	logs.WithCtx(ctx).Info("%s[received]", logMsgTemplate)
-	err := kafka.Cli().Send(ctx, kafka.NewMessage(config.GetConfig().KafkaConsumer.Topics[defined.GetKafkaMicroSmsTopic(defined.KafkaMicroSms)], json.Stringify(services.SmsKafkaData{SmsSaleId: 10})))
-	if err != nil {
-		logs.WithCtx(ctx).Error("%s[kafka.Cli().Send][err:%v]", logMsgTemplate, err)
-		return nil, err
-	}
-	return nil, err
 
 	var mobileNumberInfoList []*validation.MobileNumberInfo
 	tmp := make(map[string]bool)
@@ -193,11 +187,14 @@ func (ctrl *SmsController) ProcessSendSmsV1(ctx context.Context, in *sms.Process
 		return nil, err
 	}
 
-	/*err = kafka.Cli().Send(ctx, kafka.NewMessage(topic, json.Stringify(map[string]string{"SmsSaleId": fmt.Sprintf("%d", resp.SmsSaleId)})))
+	topic := config.GetConfig().KafkaConsumer.Topics[defined.GetKafkaMicroSmsTopic(defined.KafkaMicroSms)]
+	dataByte := json.Stringify(services.SmsKafkaData{SmsSaleId: resp.SmsSaleId})
+	err = kafka.Cli().Send(ctx, kafka.NewMessage(topic, dataByte))
 	if err != nil {
-		logs.WithCtx(ctx).Error("%s[kafka.Cli().Send][err:%v]", logMsgTemplate, err)
+		logs.WithCtx(ctx).Error("%s[kafka.Cli().Send][err:%v][topic:%v][dataByte:%s]", logMsgTemplate, err, topic, dataByte)
 		return nil, err
-	}*/
+	}
+	return nil, err
 
 	return &sms.ProcessSendSmsResp{
 		Code:    uint32(codes.OK),
