@@ -25,10 +25,13 @@ func main() {
 	if err != nil {
 		log.Fatalf("config.LoadConfig err: %v", err)
 	}
+
 	db := dbase.InitPostgresDB(cfg.PostgresDBConfig)
 	defer db.Close()
+
 	starter.InitRedis(cfg.RedisConfig)
 	starter.InitKFKProducer(cfg.KafkaProducer)
+	starter.InitKafkaTopic(cfg.KafkaConsumer.BrokersAddrs, cfg.KafkaConsumer.Topics)
 	starter.InitGRPC(defined.DtOneMicroGrpcPartner)
 
 	// Init Local Cache
