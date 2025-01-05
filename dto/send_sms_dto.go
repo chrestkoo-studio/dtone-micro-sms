@@ -28,6 +28,9 @@ func (req *ProcessSendSmsReqDTO) Validate() error {
 	if req.Message == "" {
 		return errors.New("message is required")
 	}
+	if len(req.Message) > 160 {
+		return errors.New("the message should not exceed 160 characters")
+	}
 
 	return nil
 }
