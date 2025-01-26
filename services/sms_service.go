@@ -2,16 +2,22 @@ package services
 
 import (
 	"context"
-	"database/sql"
 	"dtone-base-sms/cache"
 	"dtone-base-sms/config"
+	"dtone-base-sms/custom"
 	"dtone-base-sms/defined"
+	baseModel "dtone-base-sms/model"
 	"dtone-micro-sms/dto"
 	"dtone-micro-sms/models"
 	"dtone-micro-sms/repository"
+	"dtone-proto/wallet"
+	"dtone-std-library/grpc"
+	"dtone-std-library/grpc/metadata"
 	"dtone-std-library/json"
+	"dtone-std-library/kafka"
 	"dtone-std-library/logs"
 	"fmt"
+	"google.golang.org/grpc/codes"
 	"sync"
 	"time"
 )
@@ -69,7 +75,7 @@ func (service *SmsService) GetSmsCost(ctx context.Context, data *dto.GetSmsCostR
 	return &dto.GetSmsCostRespDTO{TotalCost: totalCost, MobileNumberInfoCost: mobileNoInfoCost}, nil
 }
 
-func (service *SmsService) ProcessSendSmsBackground(ctx context.Context, tx *sql.Tx, data *dto.ProcessSendSmsReqDTO) (*dto.ProcessSendSmsRespDTO, error) {
+func (service *SmsService) ProcessSendSmsBackground(ctx context.Context, data *dto.ProcessSendSmsReqDTO) (*dto.ProcessSendSmsRespDTO, error) {
 	logMsgTemplate := fmt.Sprintf("[SmsService][ProcessSendSmsBackground][req:%s]", json.String(data))
 	smsCostReq := &dto.GetSmsCostReqDTO{
 		MobileNumberInfoList: data.MobileNumberInfoList,
@@ -83,6 +89,24 @@ func (service *SmsService) ProcessSendSmsBackground(ctx context.Context, tx *sql
 		logs.WithCtx(ctx).Error("%s[smsCost][err:smsCostNil][data:%v]", logMsgTemplate, json.String(smsCostReq))
 		return nil, err
 	}
+
+	// Start a transaction
+	tx, err := service.SmsConfigRepo.DAO.DB.Begin()
+	if err != nil {
+		err = fmt.Errorf("failed to begin transaction: %w", err)
+		logs.WithCtx(ctx).Error("%s[service.SmsConfigRepo.DAO.DB.Begin][err:%v]", logMsgTemplate, err)
+		return nil, err
+	}
+
+	// Ensure transaction is rolled back in case of failure
+	defer func() {
+		if err != nil {
+			err = tx.Rollback()
+			if err != nil {
+				logs.WithCtx(ctx).Error("%s[tx.Rollback][err:%v]", logMsgTemplate, err)
+			}
+		}
+	}()
 
 	// start save sms sale
 	smsSaleData := &models.SmsSale{
@@ -115,6 +139,33 @@ func (service *SmsService) ProcessSendSmsBackground(ctx context.Context, tx *sql
 			logs.WithCtx(ctx).Error("%s[service.SmsSaleMobileNumberRepo.Create][err:%v][smsSaleMobileNumberData:%v]", logMsgTemplate, err, json.String(smsSaleMobileNumberData))
 			return nil, err
 		}
+	}
+
+	callWalletTransGrpcInfo := &CallWalletTransGrpcInfo{
+		PartnerId: data.PartnerId,
+		SmsSaleId: smsSaleId,
+		TotalCost: int64(smsCost.TotalCost),
+	}
+	err = service.CallWalletTransGrpc(ctx, callWalletTransGrpcInfo)
+	if err != nil {
+		logs.WithCtx(ctx).Error("%s[service.callWalletTransGrpc][err:%v][callWalletTransGrpcInfo:%v]", logMsgTemplate, err, json.String(callWalletTransGrpcInfo))
+		return nil, err
+	}
+
+	// Commit the transaction
+	err = tx.Commit()
+	if err != nil {
+		err = fmt.Errorf("failed to commit transaction: %w", err)
+		logs.WithCtx(ctx).Error("%s[tx.Commit][err:%v]", logMsgTemplate, err)
+		return nil, err
+	}
+
+	topic := config.GetConfig().KafkaConsumer.Topics[defined.GetKafkaMicroSmsTopic(defined.KafkaMicroSms)]
+	dataByte := json.Stringify(SmsKafkaData{SmsSaleId: smsSaleId})
+	err = kafka.Cli().Send(ctx, kafka.NewMessage(topic, dataByte))
+	if err != nil {
+		logs.WithCtx(ctx).Error("%s[kafka.Cli().Send][err:%v][topic:%v][dataByte:%s]", logMsgTemplate, err, topic, dataByte)
+		return nil, err
 	}
 
 	return &dto.ProcessSendSmsRespDTO{SmsSaleId: smsSaleId, TotalCost: smsCost.TotalCost}, nil
@@ -164,5 +215,65 @@ func (service *SmsService) ProcessSendSms(ctx context.Context, smsSaleId uint64)
 	}
 
 	logs.WithCtx(ctx).Info("%s[done][totalRecord:%d]", logMsgTemplate, len(list))
+	return nil
+}
+
+type CallWalletTransGrpcInfo struct {
+	PartnerId uint64
+	SmsSaleId uint64
+	TotalCost int64
+}
+
+func (service *SmsService) CallWalletTransGrpc(ctx context.Context, data *CallWalletTransGrpcInfo) error {
+	logMsgTemplate := fmt.Sprintf("[SmsService][callWalletTransGrpc][data:%v]", json.String(data))
+	grpcConn, err := grpc.Get(defined.DtOneMicroGrpcWallet)
+	if err != nil {
+		retryConnCount := 3
+		for i := 0; i < retryConnCount; i++ {
+			grpcConn, err = grpc.Get(defined.DtOneMicroGrpcWallet)
+			if err != nil {
+				logs.WithCtx(ctx).Error("[grpc.Get][serviceName:%s][errCode:%d][err:%v]", defined.DtOneMicroGrpcWallet, defined.ErrGRPCServerDisconnected, err)
+			}
+			if grpcConn != nil {
+				break
+			}
+		}
+	}
+	if grpcConn == nil {
+		logs.WithCtx(ctx).Error("%s[grpc.Get][err:%v][service:%s][grpcConn:%v]", logMsgTemplate, err, defined.DtOneMicroGrpcWallet, "grpcConn is nil")
+		return err
+	}
+
+	walletGRPCClient := wallet.NewWalletServiceClient(grpcConn.Conn())
+	if walletGRPCClient == nil {
+		err = fmt.Errorf("grpc client %s is nil [errCode:%d]", defined.DtOneMicroGrpcWallet, defined.ErrGRPCClientDisconnected)
+		logs.WithCtx(ctx).Error("%s[wallet.NewWalletServiceClient][err:%v]", logMsgTemplate, err)
+		return err
+	}
+
+	grpcCtx, grpcCtxCancel := metadata.NewOutgoing().WithTimeout(custom.GetGRPCContextTimeout()).SetPairs(logs.LogIdCode, custom.GetLogId(ctx)).Ctx()
+	partnerWalletReq := wallet.CreateWalletTransReq{
+		PartnerId:     data.PartnerId,
+		WalletTypeId:  baseModel.GetDefaultWalletConfig().ID,
+		TransType:     defined.WalletTransTypeSms,
+		TransId:       data.SmsSaleId,
+		TotalIn:       0,
+		TotalOut:      data.TotalCost,
+		AdditionalMsg: "",
+		Remark:        "",
+		TransAt:       time.Now().Unix(),
+		CreatedBy:     defined.DefaultCreatedBy,
+	}
+	partnerWalletResp, err := walletGRPCClient.CreateWalletTransV1(grpcCtx, &partnerWalletReq)
+	defer grpcCtxCancel()
+	if err != nil {
+		logs.WithCtx(ctx).Error("%s[walletGRPCClient.CreateWalletTransV1][err:%v][req:%s]", logMsgTemplate, err, json.String(partnerWalletReq))
+		return err
+	}
+
+	if partnerWalletResp.Code != uint32(codes.OK) {
+		logs.WithCtx(ctx).Error("%s[walletGRPCClient.CreateWalletTransV1][resp][err:%v][partnerWalletReq:%v]", logMsgTemplate, err, json.String(partnerWalletReq))
+		return err
+	}
 	return nil
 }
