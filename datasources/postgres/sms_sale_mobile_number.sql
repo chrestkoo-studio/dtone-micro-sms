@@ -6,6 +6,7 @@ CREATE TABLE sms_sale_mobile_number
     message       TEXT         NOT NULL,            -- SMS message content
     total_cost    BIGINT       NOT NULL DEFAULT 0,  -- Total cost per message
     retry_count   INT          NOT NULL DEFAULT 0,  -- Retry count (default is 0)
+    next_retry_at      BIGINT                DEFAULT 0,  -- Next Retry timestamp
     status        INT          NOT NULL DEFAULT 0,  -- Status of the sale
     created_at    BIGINT                DEFAULT 0,  -- Creation timestamp
     created_by    VARCHAR(255) NOT NULL DEFAULT '', -- User who created the entry

@@ -11,6 +11,7 @@ type ProcessSendSmsReqDTO struct {
 	PartnerId            uint64                         `json:"PartnerId" binding:"required"`
 	MobileNumberInfoList []*validation.MobileNumberInfo `json:"MobileNumberInfoList" binding:"required"`
 	Message              string                         `json:"Message" binding:"required"`
+	AutoConfirm          bool                           `json:"AutoConfirm"`
 }
 
 // ProcessSendSmsRespDTO for returning result to send a sms request
@@ -19,7 +20,7 @@ type ProcessSendSmsRespDTO struct {
 	TotalCost uint64 `json:"TotalCost"`
 }
 
-// Validate Create Partner Request
+// Validate Process Send Sms Request
 func (req *ProcessSendSmsReqDTO) Validate() error {
 	if len(req.MobileNumberInfoList) < 1 {
 		return errors.New("mobile no is required")

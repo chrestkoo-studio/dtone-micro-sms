@@ -36,7 +36,7 @@ func main() {
 
 	// Init Local Cache
 	cache.InitLocalCache(ctx, db)
-	go initKafkaService(ctx, db)
+	go initBackgroundProcess(ctx, db)
 
 	// gRPC server setup
 	srv := grpc.NewServer()
@@ -68,7 +68,7 @@ func initSmsControllerDependency(db *sql.DB) *v1.SmsController {
 	return v1.NewSmsController(service)
 }
 
-func initKafkaService(ctx context.Context, db *sql.DB) {
+func initBackgroundProcess(ctx context.Context, db *sql.DB) {
 
 	// Initialize Dependency injection SmsConfig DAO & Repo
 	smsConfigDAO := dao.NewSmsConfigDAO(db)
@@ -86,6 +86,6 @@ func initKafkaService(ctx context.Context, db *sql.DB) {
 	smsLogDAO := dao.NewSmsLogDAO(db)
 	smsLogRepo := repository.NewSmsLogRepository(smsLogDAO)
 
-	// Initialize Dependency kafka Service
-	services.NewKafkaService(smsConfigRepo, smsSaleRepo, smsSaleMobileNumberRepo, smsLogRepo).InitConsumer(ctx)
+	go services.NewKafkaService(smsConfigRepo, smsSaleRepo, smsSaleMobileNumberRepo, smsLogRepo).InitConsumer(ctx)                  // Initialize Dependency kafka Service
+	go services.NewSMSBackgroundService(smsConfigRepo, smsSaleRepo, smsSaleMobileNumberRepo, smsLogRepo).InitSMSBackgroundService() // // Initialize Dependency Sms Background Service
 }

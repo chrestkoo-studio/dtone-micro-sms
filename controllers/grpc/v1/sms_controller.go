@@ -92,7 +92,8 @@ func (ctrl *SmsController) ProcessSendSmsV1(ctx context.Context, in *sms.Process
 	req := dto.ProcessSendSmsReqDTO{
 		PartnerId:            in.GetPartnerId(),
 		MobileNumberInfoList: mobileNumberInfoList,
-		Message:              in.Message,
+		Message:              in.GetMessage(),
+		AutoConfirm:          in.GetAutoConfirm(),
 	}
 	if err := req.Validate(); err != nil {
 		logs.WithCtx(ctx).Error("%s[req.Validate][err:%v][req:%v]", logMsgTemplate, err, json.String(req))
@@ -112,6 +113,48 @@ func (ctrl *SmsController) ProcessSendSmsV1(ctx context.Context, in *sms.Process
 	}
 
 	return &sms.ProcessSendSmsResp{
+		Code:    uint32(codes.OK),
+		Message: "success",
+	}, nil
+}
+
+func (ctrl *SmsController) ProcessConfirmSendSmsBatchV1(ctx context.Context, in *sms.ProcessConfirmSendSmsBatchReq) (*sms.ProcessConfirmSendSmsBatchResp, error) {
+	logMsgTemplate := fmt.Sprintf("[SmsController][ProcessConfirmSendSmsBatchV1][in:%s]", json.String(in))
+	ctx = custom.SetLogIdIfNotExist(ctx, "")
+	logs.WithCtx(ctx).Info("%s[received]", logMsgTemplate)
+
+	var list []*dto.ConfirmSendSmsSaleInfo
+	err := json.ParseE(json.Stringify(in.GetConfirmSendSmsSaleInfoList()), &list)
+	if err != nil {
+		logs.WithCtx(ctx).Error("%s[json.ParseE][err:%v]", logMsgTemplate, err)
+		return &sms.ProcessConfirmSendSmsBatchResp{
+			Code:    uint32(codes.InvalidArgument),
+			Message: err.Error(),
+		}, nil
+	}
+
+	req := dto.ProcessConfirmSendSmsBatchReqDTO{
+		PartnerId:                  in.GetPartnerId(),
+		ConfirmSendSmsSaleInfoList: list,
+	}
+	if err = req.Validate(); err != nil {
+		logs.WithCtx(ctx).Error("%s[req.Validate][err:%v][req:%v]", logMsgTemplate, err, json.String(req))
+		return &sms.ProcessConfirmSendSmsBatchResp{
+			Code:    uint32(codes.InvalidArgument),
+			Message: err.Error(),
+		}, nil
+	}
+
+	err = ctrl.SmsService.ProcessConfirmSendSmsBatch(ctx, &req)
+	if err != nil {
+		logs.WithCtx(ctx).Error("%s[ctrl.SmsService.ProcessConfirmSendSmsBatch][err:%v][req:%v]", logMsgTemplate, err, json.String(req))
+		return &sms.ProcessConfirmSendSmsBatchResp{
+			Code:    uint32(codes.Internal),
+			Message: "process send sms failed",
+		}, nil
+	}
+
+	return &sms.ProcessConfirmSendSmsBatchResp{
 		Code:    uint32(codes.OK),
 		Message: "success",
 	}, nil

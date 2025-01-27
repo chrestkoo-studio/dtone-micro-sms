@@ -22,6 +22,7 @@ type SmsSaleMobileNumber struct {
 
 const (
 	SmsSaleMobileNumberStatusPending = iota
+	SmsSaleMobileNumberStatusConfirmed
 	SmsSaleMobileNumberStatusCompleted
 	SmsSaleMobileNumberStatusRejected
 	SmsSaleMobileNumberStatusCancelled

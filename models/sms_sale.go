@@ -20,7 +20,8 @@ type SmsSale struct {
 
 const (
 	SmsSaleStatusPending = iota
-	SmsSaleStatusApproved
+	SmsSaleStatusConfirmed
+	SmsSaleStatusCompleted
 	SmsSaleStatusRejected
 	SmsSaleStatusCancelled
 )
